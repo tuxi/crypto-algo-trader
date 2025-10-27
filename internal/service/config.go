@@ -2,17 +2,20 @@
 package service
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/spf13/viper"
 )
 
-// Config 结构体定义了配置文件的整体结构
-type Config struct {
-	Exchange ExchangeConfig
+type InstanceConfig struct {
+	Symbol   string
 	Risk     RiskConfig
 	Strategy StrategyConfig
+}
+
+type Config struct {
+	Exchange  ExchangeConfig            `mapstructure:"Exchange"`
+	Instances map[string]InstanceConfig `mapstructure:"Instances"`
 }
 
 // ExchangeConfig 定义了交易所的连接信息
@@ -70,6 +73,5 @@ func LoadConfig(configPath string) *Config {
 		log.Fatalf("Unable to decode config into struct: %s", err)
 	}
 
-	fmt.Printf("Configuration loaded for Symbol: %s\n", GlobalConfig.Risk.Symbol)
 	return &GlobalConfig
 }

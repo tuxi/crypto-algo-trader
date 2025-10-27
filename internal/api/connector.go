@@ -36,29 +36,42 @@ type OkxTickerData struct {
 	LastPrice string `json:"last"` // 最新成交价 (tickers 频道使用 'last')
 	Timestamp string `json:"ts"`
 	InstId    string `json:"instId"`
-	// 其他字段我们不需要，忽略
 }
+
+// 映射 InstId 到 Symbol (例如 BTC-USDT-SWAP -> BTCUSDT)
+type InstMap map[string]string
 
 // Connector 结构体 (保持不变)
 type Connector struct {
 	wsConn        *websocket.Conn
 	wsURL         string
-	symbol        string // 例如 "BTCUSDT"
+	instToSymbol  InstMap // InstID -> Symbol 的映射
 	tickerChannel chan data.Ticker
 }
 
 // NewConnector (保持不变)
-func NewConnector(wsURL string, symbol string) *Connector {
+func NewConnector(wsURL string, symbols []string) *Connector {
+	// 确保通道有足够的缓冲区来应对高频数据
+	tickerChan := make(chan data.Ticker, 2048)
+	// 构造 instId: 例如 BTCUSDT -> BTC-USDT-SWAP
+	instToSymbol := make(InstMap, len(symbols))
+	for _, symbol := range symbols {
+		instID := symbol[:3] + "-" + symbol[3:] + "-SWAP"
+		instToSymbol[instID] = symbol
+	}
+
+	service.Logger.Info("Connector initialized", zap.Strings("Symbols", symbols))
+
 	return &Connector{
 		wsURL:         wsURL,
-		symbol:        symbol,
-		tickerChannel: make(chan data.Ticker, 100),
+		instToSymbol:  instToSymbol,
+		tickerChannel: tickerChan,
 	}
 }
 
 // Start 启动 WebSocket 连接和接收 Goroutine
 func (c *Connector) Start() {
-	service.Logger.Info("Starting Okx WebSocket connection (TRADE channel)...", zap.String("URL", c.wsURL))
+	service.Logger.Info("Starting Okx WS multi-symbol connection...", zap.String("URL", c.wsURL))
 
 	u, _ := url.Parse(c.wsURL)
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
@@ -68,35 +81,35 @@ func (c *Connector) Start() {
 	c.wsConn = conn
 	defer c.wsConn.Close()
 
-	// 构造 instId: 例如 BTCUSDT -> BTC-USDT-SWAP
-	instID := c.symbol[:3] + "-" + c.symbol[3:] + "-SWAP"
-
+	var args []map[string]string
+	for instID, _ := range c.instToSymbol {
+		args = append(args, map[string]string{"channel": "trades", "instId": instID})
+		args = append(args, map[string]string{"channel": "tickers", "instId": instID})
+	}
 	// 同时订阅 'trade' 和 'tickers' 频道
 	subscribeMsg := map[string]interface{}{
-		"op": "subscribe",
-		"args": []map[string]string{
-			{"channel": "trades", "instId": instID},
-			{"channel": "tickers", "instId": instID},
-		},
+		"op":   "subscribe",
+		"args": args,
 	}
 
 	if err := c.wsConn.WriteJSON(subscribeMsg); err != nil {
-		service.Logger.Error("Failed to send WS trade subscription", zap.Error(err))
+		service.Logger.Error("Failed to send WS aggregated subscription", zap.Error(err))
 		return
 	}
-	//service.Logger.Info("Subscribed to Okx TRADE stream successfully", zap.String("instId", instID))
+	service.Logger.Info("Subscribed to all Okx TRADE and TICKERS streams successfully")
 
-	c.readLoop(instID)
+	// 启动读循环
+	c.readLoop()
 }
 
 // readLoop 持续读取 WS 消息并处理
-func (c *Connector) readLoop(instID string) {
+func (c *Connector) readLoop() {
 	for {
 		_, message, err := c.wsConn.ReadMessage()
 		if err != nil {
 			service.Logger.Error("Error reading WS message, attempting to reconnect...", zap.Error(err))
 			time.Sleep(5 * time.Second)
-			return
+			continue // 跳过，让其重连
 		}
 
 		var wsResp OkxWsData // 使用 RawMessage 结构的 OkxWsData
@@ -108,8 +121,18 @@ func (c *Connector) readLoop(instID string) {
 			continue // 忽略订阅成功或缺取消订阅事件
 		}
 
-		if wsResp.Arg.InstId != instID || len(wsResp.Data) == 0 {
+		instID := wsResp.Arg.InstId
+		if instID == "" || len(wsResp.Data) == 0 {
 			continue
+		}
+
+		symbol, ok := c.instToSymbol[instID] // 根据 InstID 查找 Symbol
+		if !ok || len(wsResp.Data) == 0 {
+			continue
+		}
+
+		if !ok {
+			return
 		}
 
 		channel := wsResp.Arg.Channel
@@ -146,6 +169,7 @@ func (c *Connector) readLoop(instID string) {
 
 				// 3. 构建内部 Ticker 结构
 				ticker := data.Ticker{
+					Symbol:       symbol,
 					Timestamp:    timestamp,
 					Price:        price,
 					Volume:       volume,
@@ -153,7 +177,12 @@ func (c *Connector) readLoop(instID string) {
 				}
 
 				// 发送给 Data Engine
-				c.tickerChannel <- ticker
+				// 使用 select/default 防止阻塞 Connector
+				select {
+				case c.tickerChannel <- ticker:
+				default:
+					service.Logger.Warn("Ticker channel full! Dropping trade data for", zap.String("Symbol", symbol))
+				}
 			}
 		} else if channel == "tickers" {
 			var tickers []OkxTickerData
@@ -177,12 +206,18 @@ func (c *Connector) readLoop(instID string) {
 
 			// 构造 Ticker：volume=0, IsBuyerMaker=false (价格快照)
 			ticker := data.Ticker{
+				Symbol:       symbol,
 				Timestamp:    timestamp,
 				Price:        price,
 				Volume:       0,
 				IsBuyerMaker: false,
 			}
-			c.tickerChannel <- ticker
+			// 使用 select/default 防止阻塞 Connector
+			select {
+			case c.tickerChannel <- ticker:
+			default:
+				service.Logger.Debug("Ticker channel full! Dropping ticker snapshot for", zap.String("Symbol", symbol))
+			}
 
 		}
 	}

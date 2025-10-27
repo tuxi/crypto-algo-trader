@@ -1,79 +1,99 @@
 package main
 
 import (
+	"context"
 	"crypto-algo-trader/internal/api"
 	"crypto-algo-trader/internal/data"
+	executor "crypto-algo-trader/internal/execution"
 	"crypto-algo-trader/internal/service"
 	"crypto-algo-trader/internal/strategy"
 	"crypto-algo-trader/pkg/ta"
 	"fmt"
 	"go.uber.org/zap"
 	"os"
-	"time"
 )
 
 func main() {
-	// 1. 初始化基础服务
 	service.InitLogger()
 	defer service.Logger.Sync()
 
-	// 2. 加载配置服务
 	configPath := "config"
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		service.Logger.Fatal("Configuration directory 'config/' not found. Please create it.")
 	}
 	cfg := service.LoadConfig(configPath)
 
-	service.Logger.Info("System Initialization Complete.")
-	service.Logger.Info(fmt.Sprintf("Exchange: %s, Symbol: %s", cfg.Exchange.Name, cfg.Risk.Symbol))
+	// 1. 收集所有要订阅的 Symbol
+	var symbols []string
+	for _, instanceCfg := range cfg.Instances {
+		symbols = append(symbols, instanceCfg.Symbol)
+	}
 
-	// 3. 初始化数据层
-	connector := api.NewConnector(cfg.Exchange.WSURL, cfg.Risk.Symbol)              // API 连接器
-	dataEngine := data.NewDataEngine(connector.GetTickerChannel(), cfg.Risk.Symbol) // 数据引擎
+	// 2. 初始化单个 Connector (连接器只负责连接和收集所有数据)
+	connector := api.NewConnector(cfg.Exchange.WSURL, symbols)
 
-	//  4.初始化策略层核心 ---
-	taClient := ta.NewTACalculator(service.Logger) // 初始化指标计算器
-	// 初始化状态机，传入 TA 客户端和策略配置
-	stateMachine := strategy.NewStateMachine(taClient, &cfg.Strategy)
+	// 3. 启动 Connector
+	go connector.Start()
 
-	// 5. 启动 Goroutine
-	go connector.Start()  // 启动 WS 连接和 Ticker 接收
-	go dataEngine.Start() // 启动 K 线聚合
+	// 4. 为每个交易实例启动一个隔离的业务 Goroutine
+	for instanceName, instanceCfg := range cfg.Instances {
 
-	// 6. 主循环 (接收并处理 K 线数据，驱动更新)
-	klineChan := dataEngine.GetKlineChannel()
+		service.Logger.Info(fmt.Sprintf("Exchange: %s, Symbol: %s", instanceName, instanceCfg.Symbol))
 
-	service.Logger.Info("Main loop started. Waiting for KLine data to update TA...")
+		go func(name string, instance service.InstanceConfig) {
+			// 使用专用的 logger
+			instanceLogger := service.Logger.With(zap.String("Instance", name), zap.String("Symbol", instance.Symbol))
+			instanceLogger.Info("Starting isolated trading pipeline...")
 
-	// 用于演示：定期打印H1指标
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			taData, err := taClient.GetTAData("1h")
-			if err == nil {
-				service.Logger.Info("1H TA Snapshot",
-					zap.Float64("MA20", taData.MA),
-					zap.Float64("RSI14", taData.RSI),
-					zap.Float64("BBandUp", taData.BBandsUp),
-				)
-			} else {
-				service.Logger.Debug("1H TA not ready", zap.Error(err))
+			// Ticker Input: 使用 Connector 的统一输出通道
+			tickerInputChan := connector.GetTickerChannel()
+
+			// Data Engine: 消费统一通道，但只处理自己的 Symbol
+			dataEngine := data.NewDataEngine(tickerInputChan, instance.Symbol)
+
+			// 初始化 TA, StateMachine, SignalGenerator
+			taClient := ta.NewTACalculator(instanceLogger)
+			stateMachine := strategy.NewStateMachine(taClient, &instance.Strategy)
+			signalGenerator := strategy.NewSignalGenerator(taClient, stateMachine, &instance.Risk, instanceLogger)
+
+			// 初始化交易执行器 (L3)
+			// 构造 Okx Executor 所需的配置 (使用 executor.OkxConfig 结构)
+			okxConfig := &executor.OkxConfig{
+				Symbol:          instance.Symbol,
+				APIKey:          cfg.Exchange.APIKey,
+				SecretKey:       cfg.Exchange.SecretKey,
+				Passphrase:      cfg.Exchange.Passphrase,
+				RESTURL:         cfg.Exchange.RESTURL,
+				MaxTotalCapital: instance.Risk.MaxTotalCapital,
 			}
-		}
-	}()
+			okxExecutor := executor.NewOkxExecutor(okxConfig, service.Logger)
 
-	// 核心循环：接收 K 线，更新指标
-	for kline := range klineChan {
-		// 更新指标
-		taClient.UpdateKLine(kline)
-		// 状态及检查状态（仅 H1 K线会触发实际转换）
-		stateMachine.CheckAndTransition(kline)
-		// 演示：实时打印当前状态 (每收到一根 K 线都打印，会很频繁)
-		// service.Logger.Debug("Current State", zap.String("State", string(stateMachine.GetCurrentState())))
+			// 启动 DataEngine
+			go dataEngine.Start()
+
+			// 启动主循环 (消费 KLine，驱动决策和执行)
+			klineChan := dataEngine.GetKlineChannel()
+			for kline := range klineChan {
+				// A: 更新指标
+				taClient.UpdateKLine(kline)
+				// B: 状态机检查状态
+				stateMachine.CheckAndTransition(kline)
+
+				// C: 获取当前持仓
+				currentPosition, _ := okxExecutor.GetCurrentPosition(context.Background())
+
+				// D: 信号生成检查
+				signal := signalGenerator.GenerateCheck(kline, currentPosition)
+
+				// E: 执行器执行信号
+				if signal.Action != strategy.ActionNone {
+					instanceLogger.Info("!!! NEW TRADING SIGNAL !!!", zap.String("Signal", signal.String()))
+					okxExecutor.ExecuteSignal(context.Background(), signal)
+				}
+			}
+		}(instanceName, instanceCfg)
 	}
 
 	// 保持主 Goroutine 不退出
 	select {}
-
 }
