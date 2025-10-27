@@ -1,7 +1,7 @@
 package strategy
 
 import (
-	"crypto-algo-trader/internal/data"
+	"crypto-algo-trader/internal/model"
 	"crypto-algo-trader/internal/service"
 	"crypto-algo-trader/pkg/ta"
 	"sync"
@@ -50,7 +50,7 @@ func NewStateMachine(taClient *ta.TACalculator, cfg *service.StrategyConfig) *St
 
 // CheckAndTransition 是状态机驱动的核心函数
 // 它主要由 H1 K线驱动，因为 H1 是我们策略切换的主要周期
-func (sm *StateMachine) CheckAndTransition(kline data.KLine) {
+func (sm *StateMachine) CheckAndTransition(kline model.KLine) {
 	if kline.Interval != "1h" {
 		// 状态机只由 H1 K 线驱动，忽略其他周期
 		return

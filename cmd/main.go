@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"crypto-algo-trader/internal/api"
-	"crypto-algo-trader/internal/data"
 	executor "crypto-algo-trader/internal/execution"
+	"crypto-algo-trader/internal/model"
 	"crypto-algo-trader/internal/service"
 	"crypto-algo-trader/internal/strategy"
 	"crypto-algo-trader/pkg/ta"
@@ -49,7 +49,7 @@ func main() {
 			tickerInputChan := connector.GetTickerChannel()
 
 			// Data Engine: 消费统一通道，但只处理自己的 Symbol
-			dataEngine := data.NewDataEngine(tickerInputChan, instance.Symbol)
+			dataEngine := model.NewDataEngine(tickerInputChan, instance.Symbol)
 
 			// 初始化 TA, StateMachine, SignalGenerator
 			taClient := ta.NewTACalculator(instanceLogger)

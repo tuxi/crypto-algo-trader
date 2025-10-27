@@ -1,7 +1,7 @@
 package api
 
 import (
-	"crypto-algo-trader/internal/data"
+	"crypto-algo-trader/internal/model"
 	"crypto-algo-trader/internal/service"
 	"encoding/json"
 	"net/url"
@@ -17,7 +17,7 @@ type OkxWsData struct {
 		Channel string `json:"channel"`
 		InstId  string `json:"instId"`
 	} `json:"arg"`
-	Data  json.RawMessage `json:"data"` // <-- 修正：使用 RawMessage 延迟解析
+	Data  json.RawMessage `json:"model"` // <-- 修正：使用 RawMessage 延迟解析
 	Event string          `json:"event"`
 }
 
@@ -46,13 +46,13 @@ type Connector struct {
 	wsConn        *websocket.Conn
 	wsURL         string
 	instToSymbol  InstMap // InstID -> Symbol 的映射
-	tickerChannel chan data.Ticker
+	tickerChannel chan model.Ticker
 }
 
 // NewConnector (保持不变)
 func NewConnector(wsURL string, symbols []string) *Connector {
 	// 确保通道有足够的缓冲区来应对高频数据
-	tickerChan := make(chan data.Ticker, 2048)
+	tickerChan := make(chan model.Ticker, 2048)
 	// 构造 instId: 例如 BTCUSDT -> BTC-USDT-SWAP
 	instToSymbol := make(InstMap, len(symbols))
 	for _, symbol := range symbols {
@@ -140,7 +140,7 @@ func (c *Connector) readLoop() {
 		if channel == "trades" {
 			var trades []OkxTradeData
 			if err := json.Unmarshal(wsResp.Data, &trades); err != nil {
-				service.Logger.Error("Trade data unmarshal error", zap.Error(err))
+				service.Logger.Error("Trade model unmarshal error", zap.Error(err))
 				continue
 			}
 
@@ -168,7 +168,7 @@ func (c *Connector) readLoop() {
 				isBuyerMaker := (okxTrade.Side != "buy") // 如果不是主动买入，则为主动卖出
 
 				// 3. 构建内部 Ticker 结构
-				ticker := data.Ticker{
+				ticker := model.Ticker{
 					Symbol:       symbol,
 					Timestamp:    timestamp,
 					Price:        price,
@@ -181,13 +181,13 @@ func (c *Connector) readLoop() {
 				select {
 				case c.tickerChannel <- ticker:
 				default:
-					service.Logger.Warn("Ticker channel full! Dropping trade data for", zap.String("Symbol", symbol))
+					service.Logger.Warn("Ticker channel full! Dropping trade model for", zap.String("Symbol", symbol))
 				}
 			}
 		} else if channel == "tickers" {
 			var tickers []OkxTickerData
 			if err := json.Unmarshal(wsResp.Data, &tickers); err != nil {
-				service.Logger.Error("Tickers data unmarshal error", zap.Error(err))
+				service.Logger.Error("Tickers model unmarshal error", zap.Error(err))
 				continue
 			}
 
@@ -205,7 +205,7 @@ func (c *Connector) readLoop() {
 			timestamp, _ := service.StringToInt64(okxTicker.Timestamp)
 
 			// 构造 Ticker：volume=0, IsBuyerMaker=false (价格快照)
-			ticker := data.Ticker{
+			ticker := model.Ticker{
 				Symbol:       symbol,
 				Timestamp:    timestamp,
 				Price:        price,
@@ -224,6 +224,6 @@ func (c *Connector) readLoop() {
 }
 
 // GetTickerChannel (保持不变)
-func (c *Connector) GetTickerChannel() chan data.Ticker {
+func (c *Connector) GetTickerChannel() chan model.Ticker {
 	return c.tickerChannel
 }

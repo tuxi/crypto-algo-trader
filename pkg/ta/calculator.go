@@ -1,7 +1,7 @@
 package ta
 
 import (
-	"crypto-algo-trader/internal/data"
+	"crypto-algo-trader/internal/model"
 	"fmt"
 	"github.com/markcheno/go-talib"
 	"sync"
@@ -43,7 +43,7 @@ func NewTACalculator(logger *zap.Logger) *TACalculator {
 }
 
 // UpdateKLine 更新数据，并重新计算指标
-func (tc *TACalculator) UpdateKLine(kline data.KLine) {
+func (tc *TACalculator) UpdateKLine(kline model.KLine) {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 
@@ -133,7 +133,7 @@ func (tc *TACalculator) GetTAData(interval string) (*TAData, error) {
 
 	taData, ok := tc.HistoryMap[interval]
 	if !ok || len(taData.Close) < tc.MinHistoryLen {
-		return nil, fmt.Errorf("TA data not available or history too short for interval %s", interval)
+		return nil, fmt.Errorf("TA model not available or history too short for interval %s", interval)
 	}
 	return taData, nil
 }

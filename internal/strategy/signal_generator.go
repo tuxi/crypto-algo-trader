@@ -1,7 +1,7 @@
 package strategy
 
 import (
-	"crypto-algo-trader/internal/data"
+	"crypto-algo-trader/internal/model"
 	"crypto-algo-trader/internal/service"
 	"crypto-algo-trader/pkg/ta"
 	"math"
@@ -30,7 +30,7 @@ func NewSignalGenerator(taClient *ta.TACalculator, state *StateMachine, riskCfg 
 
 // GenerateCheck 策略核心入口：接收 K 线，判断是否生成信号
 // Ticker/KLine数据流都可能触发信号生成，这里使用 M5 K 线作为主要驱动周期
-func (sg *SignalGenerator) GenerateCheck(kline data.KLine, currentPosition *Position) Signal {
+func (sg *SignalGenerator) GenerateCheck(kline model.KLine, currentPosition *Position) Signal {
 	// M5 周期作为信号生成的频率
 	if kline.Interval != "5m" {
 		return Signal{Action: ActionNone}
