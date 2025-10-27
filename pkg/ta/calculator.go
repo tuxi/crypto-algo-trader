@@ -29,11 +29,11 @@ type TACalculator struct {
 	mu            sync.RWMutex
 	HistoryMap    map[string]*TAData // Key: K 线周期 (e.g., "1h", "15m")
 	MinHistoryLen int                // 计算指标所需的最小历史长度
-	Logger        *zap.Logger
+	Logger        *zap.SugaredLogger
 }
 
 // NewTACalculator 初始化技术指标计算器
-func NewTACalculator(logger *zap.Logger) *TACalculator {
+func NewTACalculator(logger *zap.SugaredLogger) *TACalculator {
 	// 假设我们所需的指标（如MA20）至少需要20根K线
 	return &TACalculator{
 		HistoryMap:    make(map[string]*TAData),

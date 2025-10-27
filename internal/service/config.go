@@ -30,11 +30,12 @@ type ExchangeConfig struct {
 
 // RiskConfig 定义了风控和交易对信息
 type RiskConfig struct {
-	MaxTotalCapital float64
-	MaxPerTradeRisk float64
-	FixedLeverage   int
-	Symbol          string
-	QuoteCurrency   string
+	MaxTotalCapital     float64
+	MaxPerTradeRisk     float64
+	FixedLeverage       int
+	Symbol              string
+	QuoteCurrency       string
+	PositionScaleFactor float64 // 仓位缩放因子 实际仓位大小=基础仓位大小×PositionScaleFactor
 }
 
 // StrategyConfig 定义了策略启动参数

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"crypto-algo-trader/internal/api"
-	executor "crypto-algo-trader/internal/execution"
+	executor "crypto-algo-trader/internal/executor"
 	"crypto-algo-trader/internal/model"
 	"crypto-algo-trader/internal/service"
 	"crypto-algo-trader/internal/strategy"
@@ -51,6 +51,21 @@ func main() {
 			// Data Engine: 消费统一通道，但只处理自己的 Symbol
 			dataEngine := model.NewDataEngine(tickerInputChan, instance.Symbol)
 
+			// 初始化 SimulatorExecutor (注入 Ticker 源)
+			// SimConfig 包含初始资金、杠杆
+			simConfig := &executor.SimulatorConfig{
+				InitialCapital: 10000.00, // 从配置中读取
+				Leverage:       10,       // 合约默认杠杆
+			}
+			// 注入 DataEngine 的 Ticker 广播通道
+			simulatorExecutor := executor.NewSimulatorExecutor(
+				simConfig,
+				dataEngine.GetBroadcasterTickerChannel(), // Ticker 源
+				instanceLogger,
+			)
+			// 启动 SimulatorExecutor 的内部 Goroutine (实时监控 PnL 和止损)
+			go simulatorExecutor.StartMonitor()
+
 			// 初始化 TA, StateMachine, SignalGenerator
 			taClient := ta.NewTACalculator(instanceLogger)
 			stateMachine := strategy.NewStateMachine(taClient, &instance.Strategy)
@@ -58,15 +73,15 @@ func main() {
 
 			// 初始化交易执行器 (L3)
 			// 构造 Okx Executor 所需的配置 (使用 executor.OkxConfig 结构)
-			okxConfig := &executor.OkxConfig{
-				Symbol:          instance.Symbol,
-				APIKey:          cfg.Exchange.APIKey,
-				SecretKey:       cfg.Exchange.SecretKey,
-				Passphrase:      cfg.Exchange.Passphrase,
-				RESTURL:         cfg.Exchange.RESTURL,
-				MaxTotalCapital: instance.Risk.MaxTotalCapital,
-			}
-			okxExecutor := executor.NewOkxExecutor(okxConfig, service.Logger)
+			//okxConfig := &executor.OkxConfig{
+			//	Symbol:          instance.Symbol,
+			//	APIKey:          cfg.Exchange.APIKey,
+			//	SecretKey:       cfg.Exchange.SecretKey,
+			//	Passphrase:      cfg.Exchange.Passphrase,
+			//	RESTURL:         cfg.Exchange.RESTURL,
+			//	MaxTotalCapital: instance.Risk.MaxTotalCapital,
+			//}
+			//okxExecutor := executor.NewOkxExecutor(okxConfig, service.Logger)
 
 			// 启动 DataEngine
 			go dataEngine.Start()
@@ -80,15 +95,15 @@ func main() {
 				stateMachine.CheckAndTransition(kline)
 
 				// C: 获取当前持仓
-				currentPosition, _ := okxExecutor.GetCurrentPosition(context.Background())
+				currentPosition, _ := simulatorExecutor.GetCurrentPosition(context.Background())
 
 				// D: 信号生成检查
-				signal := signalGenerator.GenerateCheck(kline, currentPosition)
+				signal := signalGenerator.GenerateSignal(kline, currentPosition)
 
 				// E: 执行器执行信号
-				if signal.Action != strategy.ActionNone {
+				if signal.Action != model.ActionNone {
 					instanceLogger.Info("!!! NEW TRADING SIGNAL !!!", zap.String("Signal", signal.String()))
-					okxExecutor.ExecuteSignal(context.Background(), signal)
+					simulatorExecutor.ExecuteSignal(context.Background(), signal)
 				}
 			}
 		}(instanceName, instanceCfg)

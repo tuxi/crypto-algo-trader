@@ -9,26 +9,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// 市场状态常量
-type MarketState string
-
-const (
-	// 趋势模式 (Up or Down)
-	StateStrongUpTrend   MarketState = "STRONG_UP_TREND"
-	StateStrongDownTrend MarketState = "STRONG_DOWN_TREND"
-
-	// 震荡模式
-	StateHighVolRanging MarketState = "HIGH_VOL_RANGING" // 高波动震荡 (大网格/强套利)
-	StateLowVolRanging  MarketState = "LOW_VOL_RANGING"  // 低波动震荡 (微幅剥头皮/超密网格)
-
-	// 初始状态
-	StateInitial MarketState = "INITIALIZING"
-)
-
 // StateMachine 结构体
 type StateMachine struct {
 	mu           sync.RWMutex
-	CurrentState MarketState
+	CurrentState model.MarketState
 	taClient     *ta.TACalculator
 	Config       *service.StrategyConfig
 	// 状态转换阈值 (可以从配置文件加载)
@@ -40,7 +24,7 @@ type StateMachine struct {
 func NewStateMachine(taClient *ta.TACalculator, cfg *service.StrategyConfig) *StateMachine {
 	// 假设从配置或默认值初始化阈值
 	return &StateMachine{
-		CurrentState:    StateInitial,
+		CurrentState:    model.StateInitial,
 		taClient:        taClient,
 		Config:          cfg,
 		TrendThreshold:  60.0,   // RSI 超过 60 视为潜在强势
@@ -74,9 +58,9 @@ func (sm *StateMachine) CheckAndTransition(kline model.KLine) {
 	isUpTrend, isDownTrend := sm.checkStrongTrend(h1Data, h4Data)
 
 	if isUpTrend {
-		newState = StateStrongUpTrend
+		newState = model.StateStrongUpTrend
 	} else if isDownTrend {
-		newState = StateStrongDownTrend
+		newState = model.StateStrongDownTrend
 	} else {
 		// --- B. 非趋势状态：归类为震荡模式 (消除 Idle) ---
 		newState = sm.determineRangingMode(h1Data)
@@ -125,14 +109,14 @@ func (sm *StateMachine) checkStrongTrend(h1Data *ta.TAData, h4Data *ta.TAData) (
 }
 
 // determineRangingMode 根据 H1 ATR 确定震荡模式
-func (sm *StateMachine) determineRangingMode(h1Data *ta.TAData) MarketState {
+func (sm *StateMachine) determineRangingMode(h1Data *ta.TAData) model.MarketState {
 
 	// 我们需要将 ATR 转换为百分比，例如 ATR / Price
 	latestPrice := h1Data.Close[len(h1Data.Close)-1]
 
 	// 检查价格是否有效，防止除以零
 	if latestPrice == 0 {
-		return StateLowVolRanging // 异常情况，先进入保守模式
+		return model.StateLowVolRanging // 异常情况，先进入保守模式
 	}
 
 	// 计算 H1 周期下的百分比波动率
@@ -140,15 +124,15 @@ func (sm *StateMachine) determineRangingMode(h1Data *ta.TAData) MarketState {
 
 	if percentATR >= sm.ATRVolThreshold {
 		// 波动率高于阈值，进入高波动模式
-		return StateHighVolRanging
+		return model.StateHighVolRanging
 	}
 
 	// 波动率低，进入低波动模式（剥头皮）
-	return StateLowVolRanging
+	return model.StateLowVolRanging
 }
 
 // GetCurrentState 供信号生成器查询当前状态
-func (sm *StateMachine) GetCurrentState() MarketState {
+func (sm *StateMachine) GetCurrentState() model.MarketState {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.CurrentState

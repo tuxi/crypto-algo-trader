@@ -17,6 +17,8 @@ type DataEngine struct {
 	symbol      string
 
 	forwardTickerChan chan Ticker // 用于将 Ticker 转发给所有 Aggregator
+
+	broadcasterTickerChan chan Ticker // <-- Ticker 广播通道
 }
 
 // NewDataEngine 创建并初始化 DataEngine
@@ -66,6 +68,7 @@ func (de *DataEngine) Start() {
 			continue
 		}
 
+		// 转发给 KLine 聚合器
 		// Ticker 属于本实例，转发给 K 线聚合器
 		select {
 		case de.forwardTickerChan <- ticker:
@@ -74,7 +77,19 @@ func (de *DataEngine) Start() {
 			service.Logger.Warn("Forward Ticker Channel Full! Dropping Ticker.",
 				zap.String("Symbol", de.symbol), zap.Int64("TS", ticker.Timestamp))
 		}
+
+		// 转发给 Ticker 广播通道
+		select {
+		case de.broadcasterTickerChan <- ticker:
+			// 发送成功
+		default:
+		}
 	}
+}
+
+// 供 SimulatorExecutor 等需要实时 Ticker 的组件使用
+func (de *DataEngine) GetBroadcasterTickerChannel() chan Ticker {
+	return de.broadcasterTickerChan
 }
 
 // GetKlineChannel 供策略层调用以获取 K 线数据流

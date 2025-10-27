@@ -8,7 +8,7 @@ import (
 
 // Logger 是全局日志接口
 // 在其他模块中使用：service.Logger.Info("New order placed", zap.String("order_id", id))
-var Logger *zap.Logger
+var Logger *zap.SugaredLogger
 
 // InitLogger 初始化高性能的 Zap 日志
 func InitLogger() {
@@ -23,7 +23,9 @@ func InitLogger() {
 	// config.OutputPaths = []string{"stdout", "log/app.log"}
 
 	var err error
-	Logger, err = config.Build()
+	baseLogger, err := config.Build()
+	Logger = baseLogger.Sugar() // .Sugar() 方法返回 SugaredLogger
+
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
