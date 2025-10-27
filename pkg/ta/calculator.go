@@ -11,6 +11,7 @@ import (
 
 // TAData 存储计算指标所需的所有历史数据
 type TAData struct {
+	Symbol string
 	Close  []float64 // 收盘价序列
 	High   []float64 // 最高价序列
 	Low    []float64 // 最低价序列
@@ -22,6 +23,8 @@ type TAData struct {
 	BBandsUp float64
 	BBandsDn float64
 	ATR      float64
+	MACDHist []float64
+	MACD     []float64
 }
 
 // TACalculator 负责管理所有周期的数据和指标计算
@@ -53,6 +56,7 @@ func (tc *TACalculator) UpdateKLine(kline model.KLine) {
 	taData, ok := tc.HistoryMap[interval]
 	if !ok {
 		taData = &TAData{
+			Symbol: kline.Symbol,
 			Close:  make([]float64, 0, 100),
 			High:   make([]float64, 0, 100),
 			Low:    make([]float64, 0, 100),
@@ -115,6 +119,11 @@ func (tc *TACalculator) calculate(taData *TAData) {
 	bbandsUp, _, bbandsDn := talib.BBands(closePrices, 20, 2, 2, talib.SMA)
 	taData.BBandsUp = bbandsUp[len(bbandsUp)-1]
 	taData.BBandsDn = bbandsDn[len(bbandsDn)-1]
+
+	// MACD
+	macd, _, hist := talib.Macd(closePrices, 12, 26, 9)
+	taData.MACDHist = hist
+	taData.MACD = macd
 
 	// --- 平均真实波动范围 (ATR 14) ---
 	// 注意：talib ATR 需要 High, Low, Previous Close prices

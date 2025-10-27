@@ -27,8 +27,9 @@ type SimulatorPosition struct {
 	TakeProfitPrice  float64         // 止盈价格 (由策略给出)
 	UPL              float64         // 未实现盈亏
 
-	EntryTime time.Time // 记录开仓时间
-	EntryFee  float64   // 记录开仓手续费
+	EntryTime   time.Time         // 记录开仓时间
+	EntryFee    float64           // 记录开仓手续费
+	SourceState model.MarketState // 开仓时的市场状态
 }
 
 // SimulatorExecutor 实现了 Executor 接口
@@ -109,6 +110,7 @@ func (e *SimulatorExecutor) ExecuteSignal(ctx context.Context, signal model.Sign
 			LiquidationPrice: e.calculateLiquidationPrice(currentPrice, signal.Direction, e.cfg.Leverage),
 			EntryTime:        time.UnixMilli(e.lastPriceTickerTimestamp), // 使用最新 Ticker 时间
 			EntryFee:         fee,                                        // 记录开仓手续费
+			SourceState:      signal.SourceState,
 		}
 
 		e.logger.Infof("Sim ORDER FILLED (OPEN): %s %s %.4f @ %.4f. Fee: %.4f. SL: %.4f, Liq: %.4f",
@@ -412,11 +414,12 @@ func (e *SimulatorExecutor) GetCurrentPosition(ctx context.Context) (*model.Posi
 
 	// 返回内部模拟的仓位 (在真实环境中，应返回查询 API 结果)
 	return &model.Position{
-		InstID:    e.position.Symbol,
-		Direction: e.position.Side,
-		Size:      e.position.Size,
-		AvgPrice:  e.position.AvgPrice,
-		UPL:       e.position.UPL,
-		EntryTime: time.Time{},
+		InstID:      e.position.Symbol,
+		Direction:   e.position.Side,
+		Size:        e.position.Size,
+		AvgPrice:    e.position.AvgPrice,
+		UPL:         e.position.UPL,
+		EntryTime:   time.Time{},
+		SourceState: e.position.SourceState,
 	}, nil
 }

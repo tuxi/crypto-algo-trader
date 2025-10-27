@@ -17,7 +17,7 @@ type OkxWsData struct {
 		Channel string `json:"channel"`
 		InstId  string `json:"instId"`
 	} `json:"arg"`
-	Data  json.RawMessage `json:"model"` // <-- 修正：使用 RawMessage 延迟解析
+	Data  json.RawMessage `json:"data"` //使用 RawMessage 延迟解析
 	Event string          `json:"event"`
 }
 

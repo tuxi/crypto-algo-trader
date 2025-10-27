@@ -62,12 +62,13 @@ func (s Signal) String() string {
 
 // Position 结构体定义了当前持仓信息 (用于执行器和策略状态同步)
 type Position struct {
-	InstID    string
-	Direction Direction
-	Size      float64 // 仓位数量 (如果 Size=0 则为 FLAT)
-	AvgPrice  float64 // 平均开仓价格
-	UPL       float64 // 未实现盈亏
-	EntryTime time.Time
+	InstID      string
+	Direction   Direction
+	Size        float64 // 仓位数量 (如果 Size=0 则为 FLAT)
+	AvgPrice    float64 // 平均开仓价格
+	UPL         float64 // 未实现盈亏
+	EntryTime   time.Time
+	SourceState MarketState // 记录开仓时的市场状态
 }
 
 // TradeRecord 记录一次完整的开仓和平仓交易
